@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>摄影分析 - 生成提示词</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; background: #f5f5f5; }
+    .card { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    .upload-area { border: 2px dashed #ccc; border-radius: 12px; padding: 40px; text-align: center; cursor: pointer; transition: border-color 0.3s; }
+    .upload-area:hover { border-color: #0070f3; }
+    .upload-area.has-image { border-color: #0070f3; }
+    img { max-width: 100%; max-height: 400px; border-radius: 8px; margin: 12px 0; }
+    button { background: #0070f3; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; cursor: pointer; width: 100%; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; font-size: 13px; }
+    .section { margin: 16px 0; }
+    .section-title { font-weight: 600; color: #333; margin-bottom: 4px; }
+    .section-content { color: #555; line-height: 1.6; }
+    .copy-btn { background: #444; margin-top: 8px; }
+    .loading { text-align: center; padding: 20px; }
+  </style>
+</head>
+<body>
+  <h1>📷 人像摄影分析器</h1>
+  <p>上传一张你喜欢的人像作品，AI 将分析并生成 JSON 提示词</p>
+
+  <div class="card">
+    <div id="upload-area" class="upload-area" onclick="document.getElementById('fileInput').click()">
+      <p id="upload-text">📁 点击上传照片 或 拖拽到此处</p>
+      <input type="file" id="fileInput" accept="image/*" style="display: none">
+      <img id="preview" style="display:none">
+    </div>
+
+    <button id="analyzeBtn" disabled onclick="analyze()">🔍 开始分析</button>
+    <div id="loading" class="loading" style="display:none">⏳ AI 正在分析照片...</div>
+  </div>
+
+  <div id="result" class="card" style="display:none">
+    <h2>分析结果</h2>
+    <div id="analysis-sections"></div>
+    <pre id="jsonOutput"></pre>
+    <button class="copy-btn" onclick="copyJSON()">📋 复制 JSON 到剪贴板</button>
+    <button class="copy-btn" style="background:#555;margin-top:8px" onclick="downloadJSON()">💾 下载 JSON 文件</button>
+  </div>
+
+  <script>
+    let file = null;
+    const fileInput = document.getElementById('fileInput');
+    const uploadArea = document.getElementById('upload-area');
+    const uploadText = document.getElementById('upload-text');
+    const preview = document.getElementById('preview');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+
+    fileInput.addEventListener('change', handleFile);
+    uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('has-image'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('has-image'));
+    uploadArea.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadArea.classList.remove('has-image');
+      if (e.dataTransfer.files.length) {
+        file = e.dataTransfer.files[0];
+        showPreview();
+      }
+    });
+
+    function handleFile(e) {
+      file = e.target.files[0];
+      showPreview();
+    }
+
+    function showPreview() {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+        uploadText.style.display = 'none';
+        uploadArea.classList.add('has-image');
+        analyzeBtn.disabled = false;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function analyze() {
+      if (!file) return;
+      analyzeBtn.disabled = true;
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('result').style.display = 'none';
+
+      const formData = new FormData();
+      formData.append('image', file);
+
+      try {
+        const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        displayResult(data);
+      } catch (err) {
+        alert('分析失败：' + err.message);
+      } finally {
+        analyzeBtn.disabled = false;
+        document.getElementById('loading').style.display = 'none';
+      }
+    }
+
+    function displayResult(data) {
+      const sections = document.getElementById('analysis-sections');
+      const a = data.analysis || {};
+      sections.innerHTML = `
+        <div class="section"><div class="section-title">🎨 色调</div><div class="section-content">${a.color_tone || '-'}</div></div>
+        <div class="section"><div class="section-title">🌫️ 氛围感</div><div class="section-content">${a.atmosphere || '-'}</div></div>
+        <div class="section"><div class="section-title">📷 相机焦段</div><div class="section-content">${a.lens_estimation || '-'}</div></div>
+        <div class="section"><div class="section-title">📐 构图</div><div class="section-content">${a.composition || '-'}</div></div>
+      `;
+      document.getElementById('jsonOutput').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('result').style.display = 'block';
+      window._resultData = data;
+    }
+
+    function copyJSON() {
+      if (!window._resultData) return;
+      navigator.clipboard.writeText(JSON.stringify(window._resultData, null, 2));
+      alert('JSON 已复制到剪贴板');
+    }
+
+    function downloadJSON() {
+      if (!window._resultData) return;
+      const blob = new Blob([JSON.stringify(window._resultData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'photo_analysis.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
